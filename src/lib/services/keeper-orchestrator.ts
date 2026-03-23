@@ -7,6 +7,7 @@ import {
 } from "./circuit-breaker";
 import { executeHarvestCycle, DEFAULT_HARVEST_CONFIG } from "./harvester";
 import { getClientForSession } from "./user-session";
+import { listStrategyConfigs, type StoredStrategyConfig } from "./strategy-config";
 
 export interface KeeperOrchestratorOptions {
   sessionToken?: string;
@@ -68,6 +69,24 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+/**
+ * Resolve the user's saved strategy config for a given vault.
+ * Falls back to null if no matching config is found.
+ */
+function getUserStrategyConfig(
+  sessionToken: string | undefined,
+  vaultAddress: string
+): StoredStrategyConfig | null {
+  if (!sessionToken) return null;
+  const configs = listStrategyConfigs(sessionToken);
+  // Match by vault address (case-insensitive)
+  return (
+    configs.find(
+      (c) => c.vaultAddress.toLowerCase() === vaultAddress.toLowerCase()
+    ) || configs[0] || null
+  );
+}
+
 export async function startKeeperOrchestrator(
   options: KeeperOrchestratorOptions = {}
 ): Promise<KeeperState> {
@@ -107,11 +126,17 @@ export async function startKeeperOrchestrator(
   const runVolatility = async () => {
     try {
       const client = resolveClient(resolved.sessionToken || undefined);
+      const userConfig = getUserStrategyConfig(resolved.sessionToken || undefined, resolved.vaultAddress);
       await executeRebalanceCycle({
         vaultAddress: resolved.vaultAddress,
         strategyAddress: resolved.strategyAddress,
         client,
         ...DEFAULT_STRATEGY_CONFIG,
+        // Override with user's saved config if available
+        ...(userConfig?.volatility && {
+          volatilityThreshold: userConfig.volatility.threshold,
+          timeWindowMinutes: userConfig.volatility.timeWindowMinutes,
+        }),
       });
       const s = loopStates.get(key);
       if (s) s.lastRunAt.volatility = nowIso();
@@ -123,11 +148,18 @@ export async function startKeeperOrchestrator(
   const runDepeg = async () => {
     try {
       const client = resolveClient(resolved.sessionToken || undefined);
+      const userConfig = getUserStrategyConfig(resolved.sessionToken || undefined, resolved.vaultAddress);
       await executeCircuitBreakerCycle({
         vaultAddress: resolved.vaultAddress,
         strategyAddress: resolved.strategyAddress,
         client,
         ...DEFAULT_CIRCUIT_BREAKER_CONFIG,
+        // Override with user's saved config if available
+        ...(userConfig?.depeg && {
+          monitoredFeed: userConfig.depeg.monitoredFeed as "USDC/USD",
+          warningThreshold: userConfig.depeg.warningThreshold,
+          criticalThreshold: userConfig.depeg.criticalThreshold,
+        }),
       });
       const s = loopStates.get(key);
       if (s) s.lastRunAt.depeg = nowIso();
@@ -139,11 +171,21 @@ export async function startKeeperOrchestrator(
   const runHarvest = async () => {
     try {
       const client = resolveClient(resolved.sessionToken || undefined);
+      const userConfig = getUserStrategyConfig(resolved.sessionToken || undefined, resolved.vaultAddress);
       await executeHarvestCycle({
         vaultAddress: resolved.vaultAddress,
         strategyAddress: resolved.strategyAddress,
         client,
         ...DEFAULT_HARVEST_CONFIG,
+        // Override with user's saved config if available
+        ...(userConfig && {
+          rewardTokenSymbol: userConfig.rewardTokenSymbol,
+        }),
+        ...(userConfig?.harvest && {
+          bearishThreshold: userConfig.harvest.bearishThreshold,
+          bullishThreshold: userConfig.harvest.bullishThreshold,
+          normalHarvestIntervalMinutes: userConfig.harvest.intervalMinutes,
+        }),
       });
       const s = loopStates.get(key);
       if (s) s.lastRunAt.harvest = nowIso();
