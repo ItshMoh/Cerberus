@@ -2,6 +2,7 @@ import {
   HederaAIToolkit,
   AgentMode,
   type Configuration,
+  type Context,
   coreAccountPlugin,
   coreAccountQueryPlugin,
   coreConsensusPlugin,
@@ -11,15 +12,12 @@ import {
   coreMiscQueriesPlugin,
 } from "hedera-agent-kit";
 import { bonzoPlugin } from "@bonzofinancelabs/hak-bonzo-plugin";
+import type { Client } from "@hashgraph/sdk";
 import { getHederaClient } from "./hedera-client";
 
 let toolkitInstance: HederaAIToolkit | null = null;
 
-export function getAgentToolkit(): HederaAIToolkit {
-  if (toolkitInstance) return toolkitInstance;
-
-  const client = getHederaClient();
-
+export function createAgentToolkit(client: Client, context?: Context): HederaAIToolkit {
   const configuration: Configuration = {
     plugins: [
       coreAccountPlugin,
@@ -31,14 +29,22 @@ export function getAgentToolkit(): HederaAIToolkit {
       coreMiscQueriesPlugin,
       bonzoPlugin,
     ],
-    context: {
-      mode: AgentMode.AUTONOMOUS,
-    },
+    context: { mode: AgentMode.AUTONOMOUS, ...context },
   };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const toolkit = new HederaAIToolkit({ client: client as any, configuration });
+  return new HederaAIToolkit({ client: client as any, configuration });
+}
 
+export function getAgentToolkit(client?: Client): HederaAIToolkit {
+  if (client) {
+    return createAgentToolkit(client);
+  }
+
+  if (toolkitInstance) return toolkitInstance;
+
+  const operatorClient = getHederaClient();
+  const toolkit = createAgentToolkit(operatorClient);
   toolkitInstance = toolkit;
   return toolkit;
 }

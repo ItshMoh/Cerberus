@@ -1,4 +1,4 @@
-import { ContractExecuteTransaction, ContractId, Hbar } from "@hashgraph/sdk";
+import { Client, ContractExecuteTransaction, ContractId, Hbar } from "@hashgraph/sdk";
 import { ethers } from "ethers";
 import { getHederaClient } from "../hedera-client";
 import { CLM_STRATEGY_ABI, V7_STRATEGY_ABI } from "./abis";
@@ -15,8 +15,8 @@ function evmToContractId(evmAddress: string): ContractId {
 
 // --- CLM Strategy Keeper Operations ---
 
-export async function harvest(strategyAddress: string) {
-  const client = getHederaClient();
+export async function harvest(strategyAddress: string, client?: Client) {
+  const hederaClient = client || getHederaClient();
   const data = encodeFunction(CLM_STRATEGY_ABI, "harvest()", []);
 
   const tx = new ContractExecuteTransaction()
@@ -25,16 +25,16 @@ export async function harvest(strategyAddress: string) {
     .setFunctionParameters(data)
     .setMaxTransactionFee(new Hbar(5));
 
-  const response = await tx.execute(client);
-  const receipt = await response.getReceipt(client);
+  const response = await tx.execute(hederaClient);
+  const receipt = await response.getReceipt(hederaClient);
   return {
     transactionId: response.transactionId.toString(),
     status: receipt.status.toString(),
   };
 }
 
-export async function moveTicks(strategyAddress: string) {
-  const client = getHederaClient();
+export async function moveTicks(strategyAddress: string, client?: Client) {
+  const hederaClient = client || getHederaClient();
   const data = encodeFunction(CLM_STRATEGY_ABI, "moveTicks", []);
 
   const tx = new ContractExecuteTransaction()
@@ -43,8 +43,8 @@ export async function moveTicks(strategyAddress: string) {
     .setFunctionParameters(data)
     .setMaxTransactionFee(new Hbar(5));
 
-  const response = await tx.execute(client);
-  const receipt = await response.getReceipt(client);
+  const response = await tx.execute(hederaClient);
+  const receipt = await response.getReceipt(hederaClient);
   return {
     transactionId: response.transactionId.toString(),
     status: receipt.status.toString(),
@@ -54,9 +54,10 @@ export async function moveTicks(strategyAddress: string) {
 export async function panic(
   strategyAddress: string,
   minAmount0: string = "0",
-  minAmount1: string = "0"
+  minAmount1: string = "0",
+  client?: Client
 ) {
-  const client = getHederaClient();
+  const hederaClient = client || getHederaClient();
   const data = encodeFunction(CLM_STRATEGY_ABI, "panic", [
     minAmount0,
     minAmount1,
@@ -68,8 +69,8 @@ export async function panic(
     .setFunctionParameters(data)
     .setMaxTransactionFee(new Hbar(5));
 
-  const response = await tx.execute(client);
-  const receipt = await response.getReceipt(client);
+  const response = await tx.execute(hederaClient);
+  const receipt = await response.getReceipt(hederaClient);
   return {
     transactionId: response.transactionId.toString(),
     status: receipt.status.toString(),
@@ -78,8 +79,8 @@ export async function panic(
 
 // --- V7 Strategy Keeper Operations ---
 
-export async function harvestV7(strategyAddress: string) {
-  const client = getHederaClient();
+export async function harvestV7(strategyAddress: string, client?: Client) {
+  const hederaClient = client || getHederaClient();
   const data = encodeFunction(V7_STRATEGY_ABI, "harvest", []);
 
   const tx = new ContractExecuteTransaction()
@@ -88,16 +89,16 @@ export async function harvestV7(strategyAddress: string) {
     .setFunctionParameters(data)
     .setMaxTransactionFee(new Hbar(5));
 
-  const response = await tx.execute(client);
-  const receipt = await response.getReceipt(client);
+  const response = await tx.execute(hederaClient);
+  const receipt = await response.getReceipt(hederaClient);
   return {
     transactionId: response.transactionId.toString(),
     status: receipt.status.toString(),
   };
 }
 
-export async function panicV7(strategyAddress: string) {
-  const client = getHederaClient();
+export async function panicV7(strategyAddress: string, client?: Client) {
+  const hederaClient = client || getHederaClient();
   const data = encodeFunction(V7_STRATEGY_ABI, "panic", []);
 
   const tx = new ContractExecuteTransaction()
@@ -106,8 +107,8 @@ export async function panicV7(strategyAddress: string) {
     .setFunctionParameters(data)
     .setMaxTransactionFee(new Hbar(3));
 
-  const response = await tx.execute(client);
-  const receipt = await response.getReceipt(client);
+  const response = await tx.execute(hederaClient);
+  const receipt = await response.getReceipt(hederaClient);
   return {
     transactionId: response.transactionId.toString(),
     status: receipt.status.toString(),

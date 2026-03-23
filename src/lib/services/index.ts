@@ -68,4 +68,31 @@ export {
   type AuditLogRecord,
 } from "./hcs-logger";
 
+export {
+  createUserSession,
+  getSessionInfo,
+  getClientForSession,
+  destroyUserSession,
+  resolveSessionTokenFromRequest,
+  type UserSessionInfo,
+} from "./user-session";
+
+export {
+  startKeeperOrchestrator,
+  stopKeeperOrchestrator,
+  getKeeperOrchestratorStatus,
+  type KeeperOrchestratorOptions,
+} from "./keeper-orchestrator";
+
+export {
+  strategyConfigSchema,
+  createStrategyConfig,
+  listStrategyConfigs,
+  getStrategyConfig,
+  updateStrategyConfig,
+  deleteStrategyConfig,
+  type StrategyConfigInput,
+  type StoredStrategyConfig,
+} from "./strategy-config";
+
 export { getKeeperTools } from "./keeper-tools";

@@ -1,3 +1,4 @@
+import type { Client } from "@hashgraph/sdk";
 import { panic } from "../contracts/vault-writer";
 import { getAgentToolkit } from "../agent-toolkit";
 import { assessStablecoinPeg, type PegAlertLevel, type PegFeedId } from "./peg-monitor";
@@ -6,6 +7,7 @@ import { logCircuitBreakerDecision } from "./hcs-logger";
 export interface CircuitBreakerConfig {
   vaultAddress: string;
   strategyAddress: string;
+  client?: Client;
   monitoredFeed: PegFeedId;
   warningThreshold: number; // default 0.99
   criticalThreshold: number; // default 0.98
@@ -53,7 +55,7 @@ export interface CircuitBreakerDecision {
 }
 
 type ExecutableTool = {
-  execute: (args: unknown) => Promise<unknown>;
+  execute: (args: unknown, options: unknown) => Promise<unknown>;
 };
 
 function isExecutableTool(tool: unknown): tool is ExecutableTool {
@@ -77,7 +79,8 @@ function canDeposit(amount: string): boolean {
 async function executeBonzoSafeDeposit(
   tokenSymbol: string,
   amount: string,
-  onBehalfOf?: string
+  onBehalfOf?: string,
+  client?: Client
 ): Promise<LendingActionResult> {
   if (!canDeposit(amount)) {
     return {
@@ -90,7 +93,7 @@ async function executeBonzoSafeDeposit(
     };
   }
 
-  const toolkit = getAgentToolkit();
+  const toolkit = getAgentToolkit(client);
   const tools = toolkit.getTools();
   const approveTool = tools["approve_erc20_tool"];
   const depositTool = tools["bonzo_deposit_tool"];
@@ -107,15 +110,20 @@ async function executeBonzoSafeDeposit(
   }
 
   try {
-    const approveResponse = String(await approveTool.execute({
-      required: {
-        tokenSymbol,
-        amount,
-      },
-      optional: {
-        useMax: true,
-      },
-    }));
+    const approveResponse = String(
+      await approveTool.execute(
+        {
+          required: {
+            tokenSymbol,
+            amount,
+          },
+          optional: {
+            useMax: true,
+          },
+        },
+        {}
+      )
+    );
 
     const depositOptional = onBehalfOf
       ? {
@@ -126,13 +134,18 @@ async function executeBonzoSafeDeposit(
           referralCode: 0,
         };
 
-    const depositResponse = String(await depositTool.execute({
-      required: {
-        tokenSymbol,
-        amount,
-      },
-      optional: depositOptional,
-    }));
+    const depositResponse = String(
+      await depositTool.execute(
+        {
+          required: {
+            tokenSymbol,
+            amount,
+          },
+          optional: depositOptional,
+        },
+        {}
+      )
+    );
 
     return {
       attempted: true,
@@ -160,7 +173,7 @@ export async function executeCircuitBreakerCycle(
   const withAudit = async (
     decision: CircuitBreakerDecision
   ): Promise<CircuitBreakerDecision> => {
-    await logCircuitBreakerDecision(config, decision);
+    await logCircuitBreakerDecision(config, decision, config.client);
     return decision;
   };
 
@@ -216,11 +229,12 @@ export async function executeCircuitBreakerCycle(
   }
 
   try {
-    const panicResult = await panic(config.strategyAddress, "0", "0");
+    const panicResult = await panic(config.strategyAddress, "0", "0", config.client);
     const lendingAction = await executeBonzoSafeDeposit(
       config.safeTokenSymbol,
       config.safeDepositAmount,
-      config.onBehalfOf
+      config.onBehalfOf,
+      config.client
     );
 
     return withAudit({

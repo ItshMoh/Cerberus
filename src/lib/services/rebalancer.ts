@@ -1,3 +1,4 @@
+import type { Client } from "@hashgraph/sdk";
 import {
   assessVolatility,
   type FeedId,
@@ -10,6 +11,7 @@ import { logRebalanceDecision } from "./hcs-logger";
 export interface StrategyConfig {
   vaultAddress: string;
   strategyAddress: string;
+  client?: Client;
   priceFeed: FeedId;
   // Volatility detection
   volatilityThreshold: number; // % price change to trigger (default: 3)
@@ -143,7 +145,7 @@ export async function executeRebalanceCycle(
   config: StrategyConfig
 ): Promise<RebalanceDecision> {
   const withAudit = async (decision: RebalanceDecision): Promise<RebalanceDecision> => {
-    await logRebalanceDecision(config, decision);
+    await logRebalanceDecision(config, decision, config.client);
     return decision;
   };
 
@@ -192,7 +194,7 @@ export async function executeRebalanceCycle(
 
   // Execute moveTicks to rebalance
   try {
-    const result = await moveTicks(config.strategyAddress);
+    const result = await moveTicks(config.strategyAddress, config.client);
     lastActionTime.set(config.strategyAddress, Math.floor(Date.now() / 1000));
 
     // Reset calm tracker after any action

@@ -1,3 +1,4 @@
+import type { Client } from "@hashgraph/sdk";
 import { harvest } from "../contracts/vault-writer";
 import { analyzeTokenSentiment, type SentimentResult } from "./sentiment";
 import { logHarvestDecision } from "./hcs-logger";
@@ -5,6 +6,7 @@ import { logHarvestDecision } from "./hcs-logger";
 export interface HarvestConfig {
   vaultAddress: string;
   strategyAddress: string;
+  client?: Client;
   rewardTokenSymbol: string;
   // Decision thresholds
   bearishThreshold: number; // default: -0.2
@@ -107,7 +109,7 @@ async function swapRewardsToUsdcStub(): Promise<SwapResult> {
 
 export async function executeHarvestCycle(config: HarvestConfig): Promise<HarvestDecision> {
   const withAudit = async (decision: HarvestDecision): Promise<HarvestDecision> => {
-    await logHarvestDecision(config, decision);
+    await logHarvestDecision(config, decision, config.client);
     return decision;
   };
 
@@ -139,7 +141,7 @@ export async function executeHarvestCycle(config: HarvestConfig): Promise<Harves
   }
 
   try {
-    const harvestResult = await harvest(config.strategyAddress);
+    const harvestResult = await harvest(config.strategyAddress, config.client);
     setLastHarvestNow(config.strategyAddress);
 
     let swap: SwapResult = {

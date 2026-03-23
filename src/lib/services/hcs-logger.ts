@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { Client } from "@hashgraph/sdk";
 import { getAgentToolkit } from "../agent-toolkit";
 import { getNetwork } from "../contracts/addresses";
 import type { StrategyConfig, RebalanceDecision } from "./rebalancer";
@@ -82,7 +83,7 @@ function getMirrorNodeBaseUrl(): string {
     : "https://testnet.mirrornode.hedera.com/api/v1";
 }
 
-async function ensureAuditTopicId(): Promise<string> {
+async function ensureAuditTopicId(client?: Client): Promise<string> {
   if (cachedTopicId) return cachedTopicId;
 
   const fromEnv = process.env.HCS_AUDIT_TOPIC_ID;
@@ -96,7 +97,7 @@ async function ensureAuditTopicId(): Promise<string> {
     throw new Error("HCS_AUDIT_TOPIC_ID is required when HCS_AUTO_CREATE_TOPIC=false");
   }
 
-  const toolkit = getAgentToolkit();
+  const toolkit = getAgentToolkit(client);
   const tools = toolkit.getTools();
   const createTopicTool = tools["create_topic_tool"] as unknown as ExecutableTool | undefined;
   if (!createTopicTool || typeof createTopicTool.execute !== "function") {
@@ -126,13 +127,13 @@ async function ensureAuditTopicId(): Promise<string> {
   return topicId;
 }
 
-export async function logAuditEvent(event: AuditLogEvent): Promise<{
+export async function logAuditEvent(event: AuditLogEvent, client?: Client): Promise<{
   topicId: string;
   txId: string | null;
 }> {
-  const topicId = await ensureAuditTopicId();
+  const topicId = await ensureAuditTopicId(client);
 
-  const toolkit = getAgentToolkit();
+  const toolkit = getAgentToolkit(client);
   const tools = toolkit.getTools();
   const submitTool = tools["submit_topic_message_tool"] as unknown as
     | ExecutableTool
@@ -156,9 +157,9 @@ export async function logAuditEvent(event: AuditLogEvent): Promise<{
   return { topicId, txId };
 }
 
-export async function safeLogAuditEvent(event: AuditLogEvent): Promise<void> {
+export async function safeLogAuditEvent(event: AuditLogEvent, client?: Client): Promise<void> {
   try {
-    await logAuditEvent(event);
+    await logAuditEvent(event, client);
   } catch (error) {
     console.error("[hcs-logger] failed to log audit event:", error);
   }
@@ -210,7 +211,8 @@ export async function getAuditLogs(query: AuditLogQuery = {}): Promise<{
 
 export async function logRebalanceDecision(
   config: StrategyConfig,
-  decision: RebalanceDecision
+  decision: RebalanceDecision,
+  client?: Client
 ): Promise<void> {
   await safeLogAuditEvent({
     timestamp: new Date().toISOString(),
@@ -235,12 +237,13 @@ export async function logRebalanceDecision(
       error: decision.error,
     },
     txId: decision.transactionId,
-  });
+  }, client);
 }
 
 export async function logCircuitBreakerDecision(
   config: CircuitBreakerConfig,
-  decision: CircuitBreakerDecision
+  decision: CircuitBreakerDecision,
+  client?: Client
 ): Promise<void> {
   const mappedAction: AuditAction =
     decision.action === "WARNING_ONLY"
@@ -265,12 +268,13 @@ export async function logCircuitBreakerDecision(
       error: decision.error,
     },
     txId: decision.panicTransactionId,
-  });
+  }, client);
 }
 
 export async function logHarvestDecision(
   config: HarvestConfig,
-  decision: HarvestDecision
+  decision: HarvestDecision,
+  client?: Client
 ): Promise<void> {
   const mappedAction: AuditAction =
     decision.action === "HARVEST_AND_SWAP_TO_USDC"
@@ -301,5 +305,5 @@ export async function logHarvestDecision(
       error: decision.error,
     },
     txId: decision.harvestTxId,
-  });
+  }, client);
 }
