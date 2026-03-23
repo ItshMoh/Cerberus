@@ -7,6 +7,11 @@ import {
 } from "@/lib/services/rebalancer";
 import { getWindowSize, type FeedId } from "@/lib/services/volatility-monitor";
 import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
+import {
+  getClientForSession,
+  getSessionInfo,
+  resolveSessionTokenFromRequest,
+} from "@/lib/services/user-session";
 
 type VaultInfo = {
   vault: string;
@@ -44,11 +49,18 @@ function getDefaultVault(): VaultInfo {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
+    const sessionToken =
+      resolveSessionTokenFromRequest(request) || body.sessionToken || undefined;
+    const userClient =
+      sessionToken && getSessionInfo(sessionToken)
+        ? getClientForSession(sessionToken)
+        : undefined;
     const defaultVault = getDefaultVault();
 
     const config: StrategyConfig = {
       vaultAddress: body.vaultAddress || defaultVault.vault,
       strategyAddress: body.strategyAddress || defaultVault.strategy,
+      client: userClient,
       priceFeed: (body.priceFeed as FeedId) || DEFAULT_STRATEGY_CONFIG.priceFeed,
       volatilityThreshold:
         body.volatilityThreshold ?? DEFAULT_STRATEGY_CONFIG.volatilityThreshold,
@@ -68,6 +80,7 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
       vault: config.vaultAddress,
       strategy: config.strategyAddress,
+      sessionScoped: Boolean(userClient),
       regime: getCurrentRegime(config.strategyAddress),
       priceWindowSize: getWindowSize(config.priceFeed),
       decision: {

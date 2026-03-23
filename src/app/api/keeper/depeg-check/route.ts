@@ -10,6 +10,11 @@ import {
   type PegMonitorConfig,
 } from "@/lib/services/peg-monitor";
 import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
+import {
+  getClientForSession,
+  getSessionInfo,
+  resolveSessionTokenFromRequest,
+} from "@/lib/services/user-session";
 
 type VaultInfo = {
   vault: string;
@@ -46,11 +51,18 @@ function getDefaultVault(): VaultInfo {
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
+    const sessionToken =
+      resolveSessionTokenFromRequest(request) || body.sessionToken || undefined;
+    const userClient =
+      sessionToken && getSessionInfo(sessionToken)
+        ? getClientForSession(sessionToken)
+        : undefined;
     const defaultVault = getDefaultVault();
 
     const config: CircuitBreakerConfig = {
       vaultAddress: body.vaultAddress || defaultVault.vault,
       strategyAddress: body.strategyAddress || defaultVault.strategy,
+      client: userClient,
       monitoredFeed:
         (body.monitoredFeed as PegFeedId) ||
         DEFAULT_CIRCUIT_BREAKER_CONFIG.monitoredFeed,
@@ -72,6 +84,7 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
       vault: config.vaultAddress,
       strategy: config.strategyAddress,
+      sessionScoped: Boolean(userClient),
       config: {
         monitoredFeed: config.monitoredFeed,
         warningThreshold: config.warningThreshold,
@@ -150,4 +163,3 @@ export async function GET() {
     );
   }
 }
-
