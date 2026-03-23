@@ -1,6 +1,7 @@
 import { panic } from "../contracts/vault-writer";
 import { getAgentToolkit } from "../agent-toolkit";
 import { assessStablecoinPeg, type PegAlertLevel, type PegFeedId } from "./peg-monitor";
+import { logCircuitBreakerDecision } from "./hcs-logger";
 
 export interface CircuitBreakerConfig {
   vaultAddress: string;
@@ -156,6 +157,13 @@ async function executeBonzoSafeDeposit(
 export async function executeCircuitBreakerCycle(
   config: CircuitBreakerConfig
 ): Promise<CircuitBreakerDecision> {
+  const withAudit = async (
+    decision: CircuitBreakerDecision
+  ): Promise<CircuitBreakerDecision> => {
+    await logCircuitBreakerDecision(config, decision);
+    return decision;
+  };
+
   const peg = await assessStablecoinPeg({
     warningThreshold: config.warningThreshold,
     criticalThreshold: config.criticalThreshold,
@@ -170,7 +178,7 @@ export async function executeCircuitBreakerCycle(
   };
 
   if (monitored.alertLevel === "NORMAL") {
-    return {
+    return withAudit({
       action: "NO_ACTION",
       reason: `${config.monitoredFeed} at ${monitored.price.toFixed(6)} is within peg thresholds`,
       ...baseDecision,
@@ -185,11 +193,11 @@ export async function executeCircuitBreakerCycle(
         error: null,
       },
       error: null,
-    };
+    });
   }
 
   if (monitored.alertLevel === "WARNING") {
-    return {
+    return withAudit({
       action: "WARNING_ONLY",
       reason: `${config.monitoredFeed} warning: ${monitored.price.toFixed(6)} is below ${config.warningThreshold} but above critical threshold ${config.criticalThreshold}`,
       ...baseDecision,
@@ -204,7 +212,7 @@ export async function executeCircuitBreakerCycle(
         error: null,
       },
       error: null,
-    };
+    });
   }
 
   try {
@@ -215,7 +223,7 @@ export async function executeCircuitBreakerCycle(
       config.onBehalfOf
     );
 
-    return {
+    return withAudit({
       action: "PANIC_AND_DEPOSIT",
       reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Executed panic and safe deposit flow.`,
       ...baseDecision,
@@ -223,9 +231,9 @@ export async function executeCircuitBreakerCycle(
       panicTransactionId: panicResult.transactionId || parseTxId(panicResult.status),
       lendingAction,
       error: lendingAction.error,
-    };
+    });
   } catch (error) {
-    return {
+    return withAudit({
       action: "PANIC_AND_DEPOSIT",
       reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Panic execution failed.`,
       ...baseDecision,
@@ -240,6 +248,6 @@ export async function executeCircuitBreakerCycle(
         error: null,
       },
       error: error instanceof Error ? error.message : "Unknown panic execution error",
-    };
+    });
   }
 }

@@ -22,6 +22,62 @@ interface PythPriceData {
   };
 }
 
+function errorToMessage(error: unknown): string {
+  if (error instanceof AggregateError) {
+    const nested = Array.from(error.errors || [])
+      .map((e) => errorToMessage(e))
+      .filter(Boolean);
+    return nested.length > 0 ? nested.join(" | ") : error.message;
+  }
+  if (axios.isAxiosError(error)) {
+    const parts = [
+      error.message,
+      error.code,
+      error.response ? `status=${error.response.status}` : "",
+      error.config?.url ? `url=${error.config.url}` : "",
+    ].filter(Boolean);
+
+    const cause = error.cause as
+      | {
+          message?: string;
+          code?: string;
+          errno?: string;
+          syscall?: string;
+          hostname?: string;
+          address?: string;
+          port?: number;
+        }
+      | undefined;
+
+    if (cause) {
+      parts.push(
+        [
+          cause.message,
+          cause.code,
+          cause.errno,
+          cause.syscall,
+          cause.hostname,
+          cause.address,
+          cause.port !== undefined ? `port=${cause.port}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")
+      );
+    }
+
+    return parts.join(" ");
+  }
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "[object]";
+    }
+  }
+  return String(error);
+}
+
 export interface PegPriceState {
   feed: PegFeedId;
   price: number;
@@ -118,9 +174,19 @@ export async function assessStablecoinPeg(
 
   if (prices.length === 0) {
     const firstError = settled.find((r) => r.status === "rejected");
+    const details = settled
+      .map((result, index) => {
+        const feed = feeds[index];
+        if (result.status === "fulfilled") {
+          return `${feed}: ok`;
+        }
+        return `${feed}: ${errorToMessage(result.reason)}`;
+      })
+      .join("; ");
+
     throw new Error(
       firstError?.status === "rejected"
-        ? String(firstError.reason)
+        ? `No peg prices available. ${details}`
         : "No peg prices available"
     );
   }
