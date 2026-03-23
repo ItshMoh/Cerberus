@@ -12,6 +12,15 @@ import {
   getWindowSize,
   type FeedId,
 } from "./volatility-monitor";
+import {
+  analyzeTokenSentiment,
+  type SentimentResult,
+} from "./sentiment";
+import {
+  executeHarvestCycle,
+  DEFAULT_HARVEST_CONFIG,
+  type HarvestConfig,
+} from "./harvester";
 import { CLM_VAULTS, getNetwork } from "../contracts/addresses";
 
 // Helper to get default vault — handles the `as const` indexing
@@ -171,6 +180,99 @@ export function getKeeperTools() {
           regime: getCurrentRegime(defaultVault.strategy),
           priceWindowSize: getWindowSize("HBAR/USD"),
           network,
+        };
+      },
+    }),
+
+    get_sentiment: tool({
+      description:
+        "Analyze current sentiment for a reward token using LunarCrush feeds and LLM scoring. Returns score (-1 to +1), label, confidence, and reasoning.",
+      inputSchema: z.object({
+        tokenSymbol: z
+          .string()
+          .default("SAUCE")
+          .describe("Reward token symbol, e.g. SAUCE or BONZO"),
+        lookbackHours: z
+          .number()
+          .min(1)
+          .max(168)
+          .default(24)
+          .describe("How many hours of recent headlines to include"),
+        maxItems: z
+          .number()
+          .min(5)
+          .max(50)
+          .default(20)
+          .describe("Maximum number of headlines"),
+      }),
+      execute: async ({ tokenSymbol, lookbackHours, maxItems }) => {
+        const { sentiment, headlines } = await analyzeTokenSentiment({
+          tokenSymbol,
+          lookbackHours,
+          maxItems,
+        });
+
+        return {
+          tokenSymbol: sentiment.tokenSymbol,
+          score: sentiment.score,
+          label: sentiment.label,
+          confidence: sentiment.confidence,
+          reasoning: sentiment.reasoning,
+          signals: sentiment.signals,
+          sourceCount: sentiment.sourceCount,
+          fromCache: sentiment.fromCache,
+          headlineCount: headlines.length,
+        };
+      },
+    }),
+
+    execute_harvest: tool({
+      description:
+        "Run sentiment-based harvest logic. Bearish -> harvest and (planned) swap to USDC, neutral -> scheduled harvest, bullish -> delay harvest.",
+      inputSchema: z.object({
+        rewardTokenSymbol: z
+          .string()
+          .default(DEFAULT_HARVEST_CONFIG.rewardTokenSymbol)
+          .describe("Reward token to analyze"),
+        bearishThreshold: z
+          .number()
+          .min(-1)
+          .max(1)
+          .default(DEFAULT_HARVEST_CONFIG.bearishThreshold)
+          .describe("Harvest immediately below this score"),
+        bullishThreshold: z
+          .number()
+          .min(-1)
+          .max(1)
+          .default(DEFAULT_HARVEST_CONFIG.bullishThreshold)
+          .describe("Delay harvest above this score"),
+      }),
+      execute: async ({
+        rewardTokenSymbol,
+        bearishThreshold,
+        bullishThreshold,
+      }) => {
+        const config: HarvestConfig = {
+          vaultAddress: defaultVault.vault,
+          strategyAddress: defaultVault.strategy,
+          rewardTokenSymbol,
+          bearishThreshold,
+          bullishThreshold,
+          normalHarvestIntervalMinutes:
+            DEFAULT_HARVEST_CONFIG.normalHarvestIntervalMinutes,
+          lookbackHours: DEFAULT_HARVEST_CONFIG.lookbackHours,
+          maxNewsItems: DEFAULT_HARVEST_CONFIG.maxNewsItems,
+        };
+
+        const decision = await executeHarvestCycle(config);
+        return {
+          action: decision.action,
+          reason: decision.reason,
+          harvestExecuted: decision.harvestExecuted,
+          harvestTxId: decision.harvestTxId,
+          swap: decision.swap,
+          error: decision.error,
+          sentiment: decision.sentiment as SentimentResult,
         };
       },
     }),

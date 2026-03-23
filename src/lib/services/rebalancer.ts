@@ -5,6 +5,7 @@ import {
 } from "./volatility-monitor";
 import { getStrategyIsCalm, getStrategyPositionInfo } from "../contracts/vault-reader";
 import { moveTicks } from "../contracts/vault-writer";
+import { logRebalanceDecision } from "./hcs-logger";
 
 export interface StrategyConfig {
   vaultAddress: string;
@@ -141,6 +142,11 @@ export function decideAction(
 export async function executeRebalanceCycle(
   config: StrategyConfig
 ): Promise<RebalanceDecision> {
+  const withAudit = async (decision: RebalanceDecision): Promise<RebalanceDecision> => {
+    await logRebalanceDecision(config, decision);
+    return decision;
+  };
+
   // 1. Assess current volatility
   const volatility = await assessVolatility(
     config.priceFeed,
@@ -157,7 +163,7 @@ export async function executeRebalanceCycle(
 
   // 4. Execute if needed
   if (action === "NO_ACTION") {
-    return {
+    return withAudit({
       action,
       reason,
       volatility,
@@ -166,13 +172,13 @@ export async function executeRebalanceCycle(
       executed: false,
       transactionId: null,
       error: null,
-    };
+    });
   }
 
   // Check TWAP calm before executing
   const isCalm = await getStrategyIsCalm(config.strategyAddress);
   if (!isCalm) {
-    return {
+    return withAudit({
       action,
       reason: `${reason} — BUT isCalm() is false (TWAP safety check failed), skipping execution`,
       volatility,
@@ -181,7 +187,7 @@ export async function executeRebalanceCycle(
       executed: false,
       transactionId: null,
       error: "TWAP calm check failed — price too far from TWAP, unsafe to rebalance",
-    };
+    });
   }
 
   // Execute moveTicks to rebalance
@@ -197,7 +203,7 @@ export async function executeRebalanceCycle(
       calmSince.delete(config.strategyAddress);
     }
 
-    return {
+    return withAudit({
       action,
       reason,
       volatility,
@@ -206,9 +212,9 @@ export async function executeRebalanceCycle(
       executed: true,
       transactionId: result.transactionId,
       error: null,
-    };
+    });
   } catch (err) {
-    return {
+    return withAudit({
       action,
       reason,
       volatility,
@@ -217,7 +223,7 @@ export async function executeRebalanceCycle(
       executed: false,
       transactionId: null,
       error: err instanceof Error ? err.message : "Unknown execution error",
-    };
+    });
   }
 }
 

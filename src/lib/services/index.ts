@@ -38,4 +38,34 @@ export {
   type LendingActionResult,
 } from "./circuit-breaker";
 
+export {
+  analyzeTokenSentiment,
+  type SentimentConfig,
+  type SentimentResult,
+  type SentimentLabel,
+  type NewsItem,
+} from "./sentiment";
+
+export {
+  executeHarvestCycle,
+  DEFAULT_HARVEST_CONFIG,
+  type HarvestConfig,
+  type HarvestAction,
+  type HarvestDecision,
+  type SwapResult,
+} from "./harvester";
+
+export {
+  logAuditEvent,
+  safeLogAuditEvent,
+  getAuditLogs,
+  logRebalanceDecision,
+  logCircuitBreakerDecision,
+  logHarvestDecision,
+  type AuditAction,
+  type AuditLogEvent,
+  type AuditLogQuery,
+  type AuditLogRecord,
+} from "./hcs-logger";
+
 export { getKeeperTools } from "./keeper-tools";
