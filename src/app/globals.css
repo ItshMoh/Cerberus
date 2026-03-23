@@ -1,26 +1,36 @@
 @import "tailwindcss";
 
+@theme {
+  --font-sans: var(--font-geist-sans), "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-serif: "Newsreader", ui-serif, Georgia, serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --bg-light: #dcdcd0;
+  --bg-dark: #413e35;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.bg-wavy {
+  background-image: url("data:image/svg+xml,%3Csvg width='40' height='12' viewBox='0 0 40 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 6 Q 10 0, 20 6 T 40 6' stroke='rgba(0,0,0,0.08)' fill='none' stroke-width='1'/%3E%3C/svg%3E");
+  background-size: 40px 12px;
+}
+
+.bg-wavy-dark {
+  background-image: url("data:image/svg+xml,%3Csvg width='40' height='12' viewBox='0 0 40 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 6 Q 10 0, 20 6 T 40 6' stroke='rgba(255,255,255,0.08)' fill='none' stroke-width='1'/%3E%3C/svg%3E");
+  background-size: 40px 12px;
+}
+
+.bg-dotted {
+  background-image: radial-gradient(rgba(0,0,0,0.12) 1px, transparent 1px);
+  background-size: 12px 12px;
+}
+
+.bg-dotted-dark {
+  background-image: radial-gradient(rgba(255,255,255,0.12) 1px, transparent 1px);
+  background-size: 12px 12px;
 }
