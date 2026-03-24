@@ -29,6 +29,19 @@ interface AuditEntry {
   txId?: string;
 }
 
+interface BalancesData {
+  amount0: string;
+  amount1: string;
+}
+
+interface PositionInfoData {
+  main?: {
+    tickLower?: string | number;
+    tickUpper?: string | number;
+  };
+  positionWidth?: string | number;
+}
+
 export default function VaultDetail() {
   const { id } = useParams();
   const auth = useAuth();
@@ -112,8 +125,20 @@ export default function VaultDetail() {
 
   const vaultPrice = vaultData?.price && typeof vaultData.price === 'object' && 'price' in vaultData.price && !('error' in vaultData.price) ? (Number(vaultData.price.price) / 1e18) : null;
   const isCalm = typeof vaultData?.isCalm === 'boolean' ? vaultData.isCalm : null;
-  const balances = vaultData?.balances && typeof vaultData.balances === 'object' && !('error' in vaultData.balances) ? vaultData.balances : null;
-  const posInfo = vaultData?.positionInfo && typeof vaultData.positionInfo === 'object' && !('error' in vaultData.positionInfo) ? vaultData.positionInfo : null;
+  const balances: BalancesData | null =
+    vaultData?.balances &&
+    typeof vaultData.balances === 'object' &&
+    !('error' in vaultData.balances) &&
+    'amount0' in vaultData.balances &&
+    'amount1' in vaultData.balances
+      ? (vaultData.balances as BalancesData)
+      : null;
+  const posInfo: PositionInfoData | null =
+    vaultData?.positionInfo &&
+    typeof vaultData.positionInfo === 'object' &&
+    !('error' in vaultData.positionInfo)
+      ? (vaultData.positionInfo as PositionInfoData)
+      : null;
 
   if (loading) {
     return (
