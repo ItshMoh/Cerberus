@@ -1,5 +1,5 @@
 import type { Client } from "@hashgraph/sdk";
-import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
+import { INFRASTRUCTURE, getNetwork } from "@/lib/contracts/addresses";
 import { executeRebalanceCycle, DEFAULT_STRATEGY_CONFIG } from "./rebalancer";
 import {
   executeCircuitBreakerCycle,
@@ -40,20 +40,10 @@ type KeeperState = {
 const loopHandles = new Map<string, { volatility?: NodeJS.Timeout; depeg?: NodeJS.Timeout; harvest?: NodeJS.Timeout }>();
 const loopStates = new Map<string, KeeperState>();
 
-function getDefaultVault() {
+function getDefaultAddresses() {
   const network = getNetwork();
-  const vaults = CLM_VAULTS[network] as Record<
-    string,
-    {
-      vault: string;
-      strategy: string;
-      pool: string;
-      token0: string;
-      token1: string;
-      positionWidth: number;
-    }
-  >;
-  return vaults["CLXY-SAUCE"];
+  const lendingPool = INFRASTRUCTURE[network].lendingPool;
+  return { vault: lendingPool, strategy: lendingPool };
 }
 
 function makeKey(sessionToken?: string): string {
@@ -93,11 +83,11 @@ export async function startKeeperOrchestrator(
   const key = makeKey(options.sessionToken);
   stopKeeperOrchestrator(options.sessionToken);
 
-  const defaultVault = getDefaultVault();
+  const defaultAddresses = getDefaultAddresses();
   const resolved = {
     sessionToken: options.sessionToken || "",
-    vaultAddress: options.vaultAddress || defaultVault.vault,
-    strategyAddress: options.strategyAddress || defaultVault.strategy,
+    vaultAddress: options.vaultAddress || defaultAddresses.vault,
+    strategyAddress: options.strategyAddress || defaultAddresses.strategy,
     enableVolatility: options.enableVolatility ?? true,
     enableDepeg: options.enableDepeg ?? true,
     enableHarvest: options.enableHarvest ?? true,

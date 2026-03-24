@@ -1,13 +1,18 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Wallet, Bell, ShieldAlert, Copy, CheckCircle2, Activity, Brain, AlertTriangle, Power, Info, Save, History } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Wallet, Bell, ShieldAlert, Copy, CheckCircle2, Activity, Brain, AlertTriangle, Power, Info, Save, History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '@/context/AuthContext';
+import { getStrategies, saveStrategy, updateStrategy, keeperStart, keeperStop, keeperStatus } from '@/lib/api';
 
 export default function Settings() {
+  const auth = useAuth();
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [strategyId, setStrategyId] = useState<string | null>(null);
 
-  const [masterToggle, setMasterToggle] = useState(true);
+  const [masterToggle, setMasterToggle] = useState(false);
   const [volCheckInt, setVolCheckInt] = useState(1);
   const [depegCheckInt, setDepegCheckInt] = useState(10);
   const [harvestCheckInt, setHarvestCheckInt] = useState(4);
@@ -36,17 +41,119 @@ export default function Settings() {
 
   const [panicText, setPanicText] = useState('');
 
+  // Load existing strategy + keeper status on mount
+  const loadData = useCallback(async () => {
+    if (!auth.sessionToken) return;
+    try {
+      const [stratData, keeperData] = await Promise.all([
+        getStrategies(auth.sessionToken),
+        keeperStatus(auth.sessionToken),
+      ]);
+      if (stratData.ok && stratData.strategies?.length > 0) {
+        const s = stratData.strategies[0];
+        setStrategyId(s.id);
+        setRewardToken(s.rewardTokenSymbol || 'SAUCE');
+        if (s.volatility) {
+          setAutoRebalance(s.volatility.enabled ?? true);
+          setVolThreshold(s.volatility.threshold ?? 3);
+          setTimeWindow(s.volatility.timeWindowMinutes ?? 20);
+        }
+        if (s.depeg) {
+          setDepegProtection(s.depeg.enabled ?? true);
+          setStablecoinFeed(s.depeg.monitoredFeed || 'USDC/USD');
+          setWarningThreshold(s.depeg.warningThreshold ?? 0.99);
+          setCriticalThreshold(s.depeg.criticalThreshold ?? 0.98);
+        }
+        if (s.harvest) {
+          setSmartHarvester(s.harvest.enabled ?? true);
+          setBearishThreshold(s.harvest.bearishThreshold ?? -0.2);
+          setBullishThreshold(s.harvest.bullishThreshold ?? 0.2);
+          setHarvestInterval(s.harvest.intervalMinutes ?? 240);
+        }
+      }
+      if (keeperData.ok) {
+        setMasterToggle(keeperData.status?.status === 'running');
+        const intervals = keeperData.status?.options?.intervals;
+        if (intervals) {
+          if (intervals.volatilityMs) setVolCheckInt(Math.round(intervals.volatilityMs / 60000));
+          if (intervals.depegMs) setDepegCheckInt(Math.round(intervals.depegMs / 1000));
+          if (intervals.harvestMs) setHarvestCheckInt(Math.round(intervals.harvestMs / 3600000));
+        }
+      }
+    } catch {}
+  }, [auth.sessionToken]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
   const handleCopy = () => {
-    navigator.clipboard.writeText('0x1234...5678');
+    if (auth.accountId) navigator.clipboard.writeText(auth.accountId);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast.success('Address copied to clipboard');
   };
 
-  const handleSaveStrategy = () => {
-    toast.success('Strategy saved', {
-      description: 'Keeper will use your new settings on the next cycle.',
-    });
+  const handleSaveStrategy = async () => {
+    if (!auth.sessionToken) {
+      toast.error('Connect your wallet first');
+      return;
+    }
+    setSaving(true);
+    try {
+      const config = {
+        name: 'Default Strategy',
+        vaultAddress: '0x88b88B54294B2EFD97D5f3604167257975FCeC6B',
+        strategyAddress: '0xB5a7AA681676480Df4D36809015d93118Cc2de1A',
+        rewardTokenSymbol: rewardToken,
+        volatility: { enabled: autoRebalance, threshold: volThreshold, timeWindowMinutes: timeWindow },
+        depeg: { enabled: depegProtection, monitoredFeed: stablecoinFeed, warningThreshold, criticalThreshold },
+        harvest: { enabled: smartHarvester, bearishThreshold, bullishThreshold, intervalMinutes: harvestInterval },
+      };
+
+      let result;
+      if (strategyId) {
+        result = await updateStrategy(auth.sessionToken, strategyId, config);
+      } else {
+        result = await saveStrategy(auth.sessionToken, config);
+      }
+
+      if (result.ok) {
+        if (result.strategy?.id) setStrategyId(result.strategy.id);
+        toast.success('Strategy saved', { description: 'Keeper will use your new settings on the next cycle.' });
+      } else {
+        toast.error('Failed to save', { description: result.error });
+      }
+    } catch {
+      toast.error('Error saving strategy');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMasterToggle = async () => {
+    if (!auth.sessionToken) {
+      toast.error('Connect your wallet first');
+      return;
+    }
+    try {
+      if (masterToggle) {
+        const res = await keeperStop(auth.sessionToken);
+        if (res.ok) { setMasterToggle(false); toast.success('Keeper stopped'); }
+      } else {
+        const res = await keeperStart(auth.sessionToken, {
+          enableVolatility: autoRebalance,
+          enableDepeg: depegProtection,
+          enableHarvest: smartHarvester,
+          intervals: {
+            volatilityMs: volCheckInt * 60000,
+            depegMs: depegCheckInt * 1000,
+            harvestMs: harvestCheckInt * 3600000,
+          },
+        });
+        if (res.ok) { setMasterToggle(true); toast.success('Keeper started'); }
+      }
+    } catch {
+      toast.error('Failed to toggle keeper');
+    }
   };
 
   const handlePanic = () => {
@@ -80,24 +187,29 @@ export default function Settings() {
           <Wallet className="text-[#ff5a1f]" size={24} />
           <h2 className="text-xl font-semibold text-white">Wallet Connection</h2>
         </div>
-        <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-[#2a2a2a] border border-white/5 rounded-lg p-4">
-          <div>
-            <div className="text-xs text-[#dcdcd0]/50 uppercase tracking-wider mb-1">Connected Address</div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-white text-lg">0x1234...5678</span>
-              <button onClick={handleCopy} className="text-[#dcdcd0]/50 hover:text-white transition-colors">
-                {copied ? <CheckCircle2 size={16} className="text-green-400" /> : <Copy size={16} />}
-              </button>
+        {auth.connected ? (
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-[#2a2a2a] border border-white/5 rounded-lg p-4">
+            <div>
+              <div className="text-xs text-[#dcdcd0]/50 uppercase tracking-wider mb-1">Connected Address</div>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-white text-lg">{auth.accountId}</span>
+                <button onClick={handleCopy} className="text-[#dcdcd0]/50 hover:text-white transition-colors">
+                  {copied ? <CheckCircle2 size={16} className="text-green-400" /> : <Copy size={16} />}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="px-2 py-0.5 bg-white/10 rounded-full text-[10px] font-mono text-[#c2c2a3]">{auth.network}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs text-[#dcdcd0]/70">Account ID: 0.0.123456</span>
-              <span className="px-2 py-0.5 bg-white/10 rounded-full text-[10px] font-mono text-[#c2c2a3]">Testnet</span>
-            </div>
+            <button onClick={() => auth.disconnect()} className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium text-white transition-colors">
+              Disconnect
+            </button>
           </div>
-          <button className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-sm font-medium text-white transition-colors">
-            Disconnect
-          </button>
-        </div>
+        ) : (
+          <div className="bg-[#2a2a2a] border border-white/5 rounded-lg p-4 text-center">
+            <p className="text-sm text-[#dcdcd0]/70">No wallet connected. Use the Connect button in the navbar.</p>
+          </div>
+        )}
       </section>
 
       {/* 2. Keeper Configuration */}
@@ -109,7 +221,7 @@ export default function Settings() {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-white font-medium">Master Toggle</span>
-            <Toggle enabled={masterToggle} onChange={() => setMasterToggle(!masterToggle)} />
+            <Toggle enabled={masterToggle} onChange={handleMasterToggle} />
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -314,10 +426,11 @@ export default function Settings() {
       <div className="flex justify-end">
         <button
           onClick={handleSaveStrategy}
-          className="flex items-center gap-2 px-6 py-3 bg-[#ff5a1f] hover:bg-[#e04d1a] text-white rounded-lg font-medium transition-colors shadow-lg shadow-[#ff5a1f]/20"
+          disabled={saving || !auth.connected}
+          className="flex items-center gap-2 px-6 py-3 bg-[#ff5a1f] hover:bg-[#e04d1a] disabled:bg-[#ff5a1f]/30 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-colors shadow-lg shadow-[#ff5a1f]/20"
         >
-          <Save size={18} />
-          Save Strategy
+          {saving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+          {saving ? 'Saving...' : 'Save Strategy'}
         </button>
       </div>
 

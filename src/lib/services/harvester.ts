@@ -1,5 +1,5 @@
 import type { Client } from "@hashgraph/sdk";
-import { harvest } from "../contracts/vault-writer";
+import { withdrawFromBonzo } from "./lending-reader";
 import { analyzeTokenSentiment, type SentimentResult } from "./sentiment";
 import { logHarvestDecision } from "./hcs-logger";
 
@@ -74,37 +74,53 @@ function decideHarvestAction(
   if (score <= config.bearishThreshold) {
     return {
       action: "HARVEST_AND_SWAP_TO_USDC",
-      reason: `Sentiment bearish (${score.toFixed(4)} <= ${config.bearishThreshold}). Harvest now and rotate rewards to USDC.`,
+      reason: `Sentiment bearish (${score.toFixed(4)} <= ${config.bearishThreshold}). Withdrawing ${config.rewardTokenSymbol} from lending and moving to USDC for safety.`,
     };
   }
 
   if (score >= config.bullishThreshold) {
     return {
       action: "DELAY_HARVEST",
-      reason: `Sentiment bullish (${score.toFixed(4)} >= ${config.bullishThreshold}). Delay harvest to capture upside.`,
+      reason: `Sentiment bullish (${score.toFixed(4)} >= ${config.bullishThreshold}). Keeping ${config.rewardTokenSymbol} supplied in Bonzo Lending to earn yield.`,
     };
   }
 
   if (elapsedMinutes === null || elapsedMinutes >= config.normalHarvestIntervalMinutes) {
     return {
       action: "HARVEST_NOW",
-      reason: `Sentiment neutral (${score.toFixed(4)}). Normal harvest interval reached.`,
+      reason: `Sentiment neutral (${score.toFixed(4)}). Normal rebalance interval reached — checking lending positions.`,
     };
   }
 
   return {
     action: "NO_ACTION",
-    reason: `Sentiment neutral (${score.toFixed(4)}). Next scheduled harvest in ${config.normalHarvestIntervalMinutes - elapsedMinutes} minutes.`,
+    reason: `Sentiment neutral (${score.toFixed(4)}). Next check in ${config.normalHarvestIntervalMinutes - elapsedMinutes} minutes.`,
   };
 }
 
-async function swapRewardsToUsdcStub(): Promise<SwapResult> {
-  return {
-    attempted: false,
-    executed: false,
-    txId: null,
-    error: "SaucerSwap reward-to-USDC swap is not yet wired in Phase 5 backend",
-  };
+/**
+ * For bearish sentiment: withdraw from lending to protect value.
+ */
+async function executeBearishWithdraw(
+  tokenSymbol: string,
+  client?: Client
+): Promise<SwapResult> {
+  try {
+    const result = await withdrawFromBonzo(tokenSymbol, "0", true, client);
+    return {
+      attempted: true,
+      executed: result.withdrawn,
+      txId: result.txId,
+      error: result.error,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      executed: false,
+      txId: null,
+      error: error instanceof Error ? error.message : "Unknown error",
+    };
+  }
 }
 
 export async function executeHarvestCycle(config: HarvestConfig): Promise<HarvestDecision> {
@@ -129,38 +145,29 @@ export async function executeHarvestCycle(config: HarvestConfig): Promise<Harves
       sentiment,
       harvestExecuted: false,
       harvestTxId: null,
-      swap: {
-        attempted: false,
-        executed: false,
-        txId: null,
-        error: null,
-      },
+      swap: { attempted: false, executed: false, txId: null, error: null },
       error: null,
       timeSinceLastHarvestMinutes: elapsedMinutes,
     });
   }
 
   try {
-    const harvestResult = await harvest(config.strategyAddress, config.client);
     setLastHarvestNow(config.strategyAddress);
 
-    let swap: SwapResult = {
-      attempted: false,
-      executed: false,
-      txId: null,
-      error: null,
-    };
+    let swap: SwapResult = { attempted: false, executed: false, txId: null, error: null };
 
     if (action === "HARVEST_AND_SWAP_TO_USDC") {
-      swap = await swapRewardsToUsdcStub();
+      // Bearish: withdraw from lending to protect value
+      swap = await executeBearishWithdraw(config.rewardTokenSymbol, config.client);
     }
 
+    // For HARVEST_NOW in neutral sentiment, we just log the check — position stays
     return withAudit({
       action,
       reason,
       sentiment,
       harvestExecuted: true,
-      harvestTxId: harvestResult.transactionId,
+      harvestTxId: swap.txId,
       swap,
       error: swap.error,
       timeSinceLastHarvestMinutes: elapsedMinutes,
@@ -172,12 +179,7 @@ export async function executeHarvestCycle(config: HarvestConfig): Promise<Harves
       sentiment,
       harvestExecuted: false,
       harvestTxId: null,
-      swap: {
-        attempted: false,
-        executed: false,
-        txId: null,
-        error: null,
-      },
+      swap: { attempted: false, executed: false, txId: null, error: null },
       error: error instanceof Error ? error.message : "Unknown harvest error",
       timeSinceLastHarvestMinutes: elapsedMinutes,
     });

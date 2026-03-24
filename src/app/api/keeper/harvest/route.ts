@@ -5,26 +5,17 @@ import {
   type HarvestConfig,
 } from "@/lib/services/harvester";
 import { analyzeTokenSentiment } from "@/lib/services/sentiment";
-import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
+import { INFRASTRUCTURE, getNetwork } from "@/lib/contracts/addresses";
 import {
   getClientForSession,
   getSessionInfo,
   resolveSessionTokenFromRequest,
 } from "@/lib/services/user-session";
 
-type VaultInfo = {
-  vault: string;
-  strategy: string;
-  pool: string;
-  token0: string;
-  token1: string;
-  positionWidth: number;
-};
-
-function getDefaultVault(): VaultInfo {
+function getDefaultAddresses() {
   const network = getNetwork();
-  const vaults = CLM_VAULTS[network] as Record<string, VaultInfo>;
-  return vaults["CLXY-SAUCE"];
+  const lendingPool = INFRASTRUCTURE[network].lendingPool;
+  return { vault: lendingPool, strategy: lendingPool };
 }
 
 /**
@@ -53,11 +44,11 @@ export async function POST(request: Request) {
       sessionToken && getSessionInfo(sessionToken)
         ? getClientForSession(sessionToken)
         : undefined;
-    const defaultVault = getDefaultVault();
+    const defaultAddresses = getDefaultAddresses();
 
     const config: HarvestConfig = {
-      vaultAddress: body.vaultAddress || defaultVault.vault,
-      strategyAddress: body.strategyAddress || defaultVault.strategy,
+      vaultAddress: body.vaultAddress || defaultAddresses.vault,
+      strategyAddress: body.strategyAddress || defaultAddresses.strategy,
       client: userClient,
       rewardTokenSymbol:
         body.rewardTokenSymbol ?? DEFAULT_HARVEST_CONFIG.rewardTokenSymbol,
@@ -109,7 +100,7 @@ export async function POST(request: Request) {
  */
 export async function GET(request: Request) {
   try {
-    const defaultVault = getDefaultVault();
+    const defaultAddresses = getDefaultAddresses();
     const { searchParams } = new URL(request.url);
     const rewardTokenSymbol =
       searchParams.get("token") || DEFAULT_HARVEST_CONFIG.rewardTokenSymbol;
@@ -123,8 +114,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
-      vault: defaultVault.vault,
-      strategy: defaultVault.strategy,
+      vault: defaultAddresses.vault,
+      strategy: defaultAddresses.strategy,
       rewardTokenSymbol: rewardTokenSymbol.toUpperCase(),
       sentiment: analysis.sentiment,
       headlines: analysis.headlines,

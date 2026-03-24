@@ -1,43 +1,37 @@
 import { NextResponse } from "next/server";
+import { getBonzoMarketData } from "@/lib/services/lending-reader";
+import { INFRASTRUCTURE, getNetwork } from "@/lib/contracts/addresses";
 import {
-  getCLMVaultBalances,
-  getCLMVaultIsCalm,
-  getCLMVaultPrice,
-  getStrategyPositionInfo,
-  getStrategyStatus,
-  getStrategyLastHarvest,
-} from "@/lib/contracts/vault-reader";
-import { CLM_VAULTS } from "@/lib/contracts/addresses";
+  getClientForSession,
+  getSessionInfo,
+  resolveSessionTokenFromRequest,
+} from "@/lib/services/user-session";
 
-export async function GET() {
-  const vault = CLM_VAULTS.testnet["CLXY-SAUCE"];
-
+/**
+ * GET /api/vault-test
+ *
+ * Returns Bonzo Lending market data and lending pool info.
+ */
+export async function GET(request: Request) {
   try {
-    const [balances, isCalm, price, positionInfo, status, lastHarvest] =
-      await Promise.allSettled([
-        getCLMVaultBalances(vault.vault),
-        getCLMVaultIsCalm(vault.vault),
-        getCLMVaultPrice(vault.vault),
-        getStrategyPositionInfo(vault.strategy),
-        getStrategyStatus(vault.strategy),
-        getStrategyLastHarvest(vault.strategy),
-      ]);
+    const sessionToken = resolveSessionTokenFromRequest(request) || undefined;
+    const client =
+      sessionToken && getSessionInfo(sessionToken)
+        ? getClientForSession(sessionToken)
+        : undefined;
 
-    const formatResult = (r: PromiseSettledResult<unknown>) =>
-      r.status === "fulfilled"
-        ? r.value
-        : { error: String(r.reason) };
+    const network = getNetwork();
+    const lendingPool = INFRASTRUCTURE[network].lendingPool;
+
+    const marketData = await getBonzoMarketData(client);
 
     return NextResponse.json({
       ok: true,
-      vault: vault.vault,
-      strategy: vault.strategy,
-      balances: formatResult(balances),
-      isCalm: formatResult(isCalm),
-      price: formatResult(price),
-      positionInfo: formatResult(positionInfo),
-      status: formatResult(status),
-      lastHarvest: formatResult(lastHarvest),
+      network,
+      lendingPool,
+      type: "bonzo-lending",
+      marketData: marketData.raw,
+      available: marketData.available,
     });
   } catch (error) {
     return NextResponse.json(

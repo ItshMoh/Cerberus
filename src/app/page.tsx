@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import Link from 'next/link';
 
@@ -237,17 +237,16 @@ const Hero = () => {
 };
 
 const NetworkSection = () => {
-  const [nodes, setNodes] = useState<{id: number; initialAngle: number; radius: number; speed: number; distance: number}[]>([]);
-
-  useEffect(() => {
-    setNodes(Array.from({ length: 50 }).map((_, i) => {
+  const [nodes] = useState<{id: number; initialAngle: number; radius: number; speed: number; distance: number; dotRadius: number}[]>(() =>
+    Array.from({ length: 50 }).map((_, i) => {
       const initialAngle = (i / 50) * 360;
       const radius = 100 + Math.random() * 250;
       const speed = 0.3 + Math.random() * 1.2;
       const distance = Math.random() > 0.5 ? 80 : -80;
-      return { id: i, initialAngle, radius, speed, distance };
-    }));
-  }, []);
+      const dotRadius = 1 + Math.random() * 2;
+      return { id: i, initialAngle, radius, speed, distance, dotRadius };
+    })
+  );
 
   return (
     <div className="relative w-full h-[700px] bg-[var(--bg-dark)] overflow-hidden flex items-center justify-center border-y border-black/10 mt-24">
@@ -271,7 +270,7 @@ const NetworkSection = () => {
               />
               <motion.circle
                 cy="0"
-                r={1 + Math.random() * 2}
+                r={node.dotRadius}
                 fill="rgba(255,255,255,0.5)"
                 animate={{ cx: [node.radius, node.radius + node.distance, node.radius] }}
                 transition={{ duration: 8 / node.speed, repeat: Infinity, ease: "easeInOut" }}

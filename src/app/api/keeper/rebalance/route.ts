@@ -6,45 +6,27 @@ import {
   type StrategyConfig,
 } from "@/lib/services/rebalancer";
 import { getWindowSize, type FeedId } from "@/lib/services/volatility-monitor";
-import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
+import { INFRASTRUCTURE, getNetwork } from "@/lib/contracts/addresses";
 import {
   getClientForSession,
   getSessionInfo,
   resolveSessionTokenFromRequest,
 } from "@/lib/services/user-session";
 
-type VaultInfo = {
-  vault: string;
-  strategy: string;
-  pool: string;
-  token0: string;
-  token1: string;
-  positionWidth: number;
-};
-
-function getDefaultVault(): VaultInfo {
+function getDefaultAddresses() {
   const network = getNetwork();
-  const vaults = CLM_VAULTS[network] as Record<string, VaultInfo>;
-  return vaults["CLXY-SAUCE"];
+  return {
+    lendingPool: INFRASTRUCTURE[network].lendingPool,
+    // Use lending pool address as both vault and strategy for keying purposes
+    vault: INFRASTRUCTURE[network].lendingPool,
+    strategy: INFRASTRUCTURE[network].lendingPool,
+  };
 }
 
 /**
  * POST /api/keeper/rebalance
  *
- * Cron-callable endpoint that runs the volatility check-and-rebalance cycle.
- *
- * Body (optional — uses defaults for CLXY-SAUCE vault if omitted):
- * {
- *   vaultAddress?: string,
- *   strategyAddress?: string,
- *   priceFeed?: "HBAR/USD",
- *   volatilityThreshold?: number,
- *   timeWindowMinutes?: number,
- *   narrowWidth?: number,
- *   wideWidth?: number,
- *   cooldownMinutes?: number,
- *   settleMultiplier?: number
- * }
+ * Runs the volatility check and lending position rebalance cycle.
  */
 export async function POST(request: Request) {
   try {
@@ -55,17 +37,19 @@ export async function POST(request: Request) {
       sessionToken && getSessionInfo(sessionToken)
         ? getClientForSession(sessionToken)
         : undefined;
-    const defaultVault = getDefaultVault();
+    const defaults = getDefaultAddresses();
 
     const config: StrategyConfig = {
-      vaultAddress: body.vaultAddress || defaultVault.vault,
-      strategyAddress: body.strategyAddress || defaultVault.strategy,
+      vaultAddress: body.vaultAddress || defaults.vault,
+      strategyAddress: body.strategyAddress || defaults.strategy,
       client: userClient,
       priceFeed: (body.priceFeed as FeedId) || DEFAULT_STRATEGY_CONFIG.priceFeed,
       volatilityThreshold:
         body.volatilityThreshold ?? DEFAULT_STRATEGY_CONFIG.volatilityThreshold,
       timeWindowMinutes:
         body.timeWindowMinutes ?? DEFAULT_STRATEGY_CONFIG.timeWindowMinutes,
+      supplyToken: body.supplyToken ?? DEFAULT_STRATEGY_CONFIG.supplyToken,
+      supplyAmount: body.supplyAmount ?? DEFAULT_STRATEGY_CONFIG.supplyAmount,
       narrowWidth: body.narrowWidth ?? DEFAULT_STRATEGY_CONFIG.narrowWidth,
       wideWidth: body.wideWidth ?? DEFAULT_STRATEGY_CONFIG.wideWidth,
       cooldownMinutes: body.cooldownMinutes ?? DEFAULT_STRATEGY_CONFIG.cooldownMinutes,
@@ -78,8 +62,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
-      vault: config.vaultAddress,
-      strategy: config.strategyAddress,
+      lendingPool: defaults.lendingPool,
       sessionScoped: Boolean(userClient),
       regime: getCurrentRegime(config.strategyAddress),
       priceWindowSize: getWindowSize(config.priceFeed),
@@ -89,8 +72,6 @@ export async function POST(request: Request) {
         executed: decision.executed,
         transactionId: decision.transactionId,
         error: decision.error,
-        currentWidth: decision.currentWidth,
-        targetWidth: decision.targetWidth,
       },
       volatility: {
         currentPrice: decision.volatility.currentPrice,
@@ -118,13 +99,11 @@ export async function POST(request: Request) {
  * GET /api/keeper/rebalance
  *
  * Returns the current volatility state without executing any actions.
- * Useful for monitoring / dashboard display.
  */
 export async function GET() {
   try {
-    const defaultVault = getDefaultVault();
+    const defaults = getDefaultAddresses();
 
-    // Import inline to avoid circular issues
     const { assessVolatility, getWindowSize } = await import(
       "@/lib/services/volatility-monitor"
     );
@@ -138,9 +117,8 @@ export async function GET() {
     return NextResponse.json({
       ok: true,
       timestamp: new Date().toISOString(),
-      vault: defaultVault.vault,
-      strategy: defaultVault.strategy,
-      regime: getCurrentRegime(defaultVault.strategy),
+      lendingPool: defaults.lendingPool,
+      regime: getCurrentRegime(defaults.strategy),
       priceWindowSize: getWindowSize("HBAR/USD"),
       volatility: {
         currentPrice: volatility.currentPrice,

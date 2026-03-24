@@ -21,23 +21,16 @@ import {
   DEFAULT_HARVEST_CONFIG,
   type HarvestConfig,
 } from "./harvester";
-import { CLM_VAULTS, getNetwork } from "../contracts/addresses";
+import { INFRASTRUCTURE, getNetwork } from "../contracts/addresses";
 
-// Helper to get default vault — handles the `as const` indexing
-function getDefaultVault() {
+// Helper to get default lending addresses
+function getDefaultAddresses() {
   const network = getNetwork();
-  const vaults = CLM_VAULTS[network] as Record<
-    string,
-    {
-      vault: string;
-      strategy: string;
-      pool: string;
-      token0: string;
-      token1: string;
-      positionWidth: number;
-    }
-  >;
-  return vaults["CLXY-SAUCE"];
+  return {
+    lendingPool: INFRASTRUCTURE[network].lendingPool,
+    vault: INFRASTRUCTURE[network].lendingPool,
+    strategy: INFRASTRUCTURE[network].lendingPool,
+  };
 }
 
 /**
@@ -45,7 +38,7 @@ function getDefaultVault() {
  * These are registered alongside Hedera Agent Kit tools in the chat API.
  */
 export function getKeeperTools() {
-  const defaultVault = getDefaultVault();
+  const defaultAddresses = getDefaultAddresses();
   const network = getNetwork();
 
   return {
@@ -110,7 +103,7 @@ export function getKeeperTools() {
 
     execute_rebalance: tool({
       description:
-        "Execute the full rebalance cycle on a vault: assess volatility, decide whether to widen or tighten the range, and execute if needed. This calls moveTicks() on the vault strategy contract. Only use this when the user asks to rebalance or when automated keeper logic determines it's necessary.",
+        "Execute the full rebalance cycle: assess volatility and decide whether to supply or withdraw from Bonzo Lending. High volatility → withdraw for safety. Low volatility → supply to earn yield.",
       inputSchema: z.object({
         volatilityThreshold: z
           .number()
@@ -124,29 +117,31 @@ export function getKeeperTools() {
           .max(120)
           .default(20)
           .describe("Rolling time window in minutes"),
-        narrowWidth: z
-          .number()
-          .default(100)
-          .describe("Position width for calm markets"),
-        wideWidth: z
-          .number()
-          .default(400)
-          .describe("Position width for volatile markets"),
+        supplyToken: z
+          .string()
+          .default("HBAR")
+          .describe("Token to supply/withdraw from Bonzo Lending"),
+        supplyAmount: z
+          .string()
+          .default("10")
+          .describe("Amount to supply/withdraw"),
       }),
       execute: async ({
         volatilityThreshold,
         timeWindowMinutes,
-        narrowWidth,
-        wideWidth,
+        supplyToken,
+        supplyAmount,
       }) => {
         const config: StrategyConfig = {
-          vaultAddress: defaultVault.vault,
-          strategyAddress: defaultVault.strategy,
+          vaultAddress: defaultAddresses.vault,
+          strategyAddress: defaultAddresses.strategy,
           priceFeed: "HBAR/USD",
           volatilityThreshold,
           timeWindowMinutes,
-          narrowWidth,
-          wideWidth,
+          supplyToken,
+          supplyAmount,
+          narrowWidth: DEFAULT_STRATEGY_CONFIG.narrowWidth,
+          wideWidth: DEFAULT_STRATEGY_CONFIG.wideWidth,
           cooldownMinutes: DEFAULT_STRATEGY_CONFIG.cooldownMinutes,
           settleMultiplier: DEFAULT_STRATEGY_CONFIG.settleMultiplier,
         };
@@ -158,8 +153,6 @@ export function getKeeperTools() {
           executed: decision.executed,
           transactionId: decision.transactionId,
           error: decision.error,
-          currentWidth: decision.currentWidth,
-          targetWidth: decision.targetWidth,
           currentPrice: decision.volatility.currentPrice,
           priceDeltaPercent: Number(
             decision.volatility.priceDeltaPercent.toFixed(4)
@@ -175,11 +168,11 @@ export function getKeeperTools() {
       inputSchema: z.object({}),
       execute: async () => {
         return {
-          vault: defaultVault.vault,
-          strategy: defaultVault.strategy,
-          regime: getCurrentRegime(defaultVault.strategy),
+          lendingPool: defaultAddresses.lendingPool,
+          regime: getCurrentRegime(defaultAddresses.strategy),
           priceWindowSize: getWindowSize("HBAR/USD"),
           network,
+          type: "bonzo-lending",
         };
       },
     }),
@@ -253,8 +246,8 @@ export function getKeeperTools() {
         bullishThreshold,
       }) => {
         const config: HarvestConfig = {
-          vaultAddress: defaultVault.vault,
-          strategyAddress: defaultVault.strategy,
+          vaultAddress: defaultAddresses.vault,
+          strategyAddress: defaultAddresses.strategy,
           rewardTokenSymbol,
           bearishThreshold,
           bullishThreshold,

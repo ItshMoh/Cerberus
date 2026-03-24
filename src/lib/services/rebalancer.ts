@@ -4,8 +4,7 @@ import {
   type FeedId,
   type VolatilityState,
 } from "./volatility-monitor";
-import { getStrategyIsCalm, getStrategyPositionInfo } from "../contracts/vault-reader";
-import { moveTicks } from "../contracts/vault-writer";
+import { supplyToBonzo, withdrawFromBonzo } from "./lending-reader";
 import { logRebalanceDecision } from "./hcs-logger";
 
 export interface StrategyConfig {
@@ -16,9 +15,12 @@ export interface StrategyConfig {
   // Volatility detection
   volatilityThreshold: number; // % price change to trigger (default: 3)
   timeWindowMinutes: number; // rolling window size (default: 20)
-  // Range widths (tick spacing multipliers)
-  narrowWidth: number; // width for calm markets (e.g., 100)
-  wideWidth: number; // width for volatile markets (e.g., 400)
+  // Lending position config
+  supplyToken: string; // token to supply (default: HBAR)
+  supplyAmount: string; // amount to supply/withdraw (default: "10")
+  // Range widths kept for compatibility — now represent risk levels
+  narrowWidth: number;
+  wideWidth: number;
   // Cooldown
   cooldownMinutes: number; // min time between actions (default: 5)
   // Settle multiplier — volatility must stay below threshold for this * timeWindow
@@ -29,13 +31,15 @@ export const DEFAULT_STRATEGY_CONFIG: Omit<StrategyConfig, "vaultAddress" | "str
   priceFeed: "HBAR/USD",
   volatilityThreshold: 3,
   timeWindowMinutes: 20,
+  supplyToken: "HBAR",
+  supplyAmount: "10",
   narrowWidth: 100,
   wideWidth: 400,
   cooldownMinutes: 5,
   settleMultiplier: 2,
 };
 
-export type RebalanceAction = "WIDEN_RANGE" | "TIGHTEN_RANGE" | "NO_ACTION";
+export type RebalanceAction = "SUPPLY_TO_LENDING" | "WITHDRAW_FROM_LENDING" | "NO_ACTION";
 
 export interface RebalanceDecision {
   action: RebalanceAction;
@@ -58,12 +62,15 @@ const currentRegime: Map<string, "HIGH" | "LOW" | "UNKNOWN"> = new Map();
 const calmSince: Map<string, number> = new Map();
 
 /**
- * Core decision engine: should we widen or tighten the range?
+ * Core decision engine: should we supply or withdraw from lending?
+ *
+ * HIGH volatility → withdraw from lending (risk-off, hold tokens safe)
+ * LOW volatility (settled) → supply to lending (risk-on, earn yield)
  */
 export function decideAction(
   volatility: VolatilityState,
   config: StrategyConfig,
-  currentWidth: number
+  currentRegimeState: "HIGH" | "LOW" | "UNKNOWN"
 ): { action: RebalanceAction; reason: string; targetWidth: number | null } {
   const now = Math.floor(Date.now() / 1000);
   const key = config.strategyAddress;
@@ -80,31 +87,28 @@ export function decideAction(
     };
   }
 
-  // HIGH VOLATILITY — need to widen
+  // HIGH VOLATILITY → withdraw from lending (risk-off)
   if (volatility.isHighVolatility) {
-    // Reset calm tracker
     calmSince.delete(key);
-
     currentRegime.set(key, "HIGH");
 
-    // Already wide?
-    if (currentWidth >= config.wideWidth) {
+    // Already in risk-off mode?
+    if (currentRegimeState === "HIGH") {
       return {
         action: "NO_ACTION",
-        reason: `High volatility detected (${volatility.priceDeltaPercent.toFixed(2)}% delta) but range already wide (${currentWidth})`,
+        reason: `High volatility detected (${volatility.priceDeltaPercent.toFixed(2)}% delta) but already in risk-off mode`,
         targetWidth: null,
       };
     }
 
     return {
-      action: "WIDEN_RANGE",
-      reason: `${volatility.priceDeltaPercent.toFixed(2)}% price delta in ${config.timeWindowMinutes}min window exceeds ${config.volatilityThreshold}% threshold — widening range for protection`,
+      action: "WITHDRAW_FROM_LENDING",
+      reason: `${volatility.priceDeltaPercent.toFixed(2)}% price delta in ${config.timeWindowMinutes}min exceeds ${config.volatilityThreshold}% threshold — withdrawing from Bonzo Lending for safety`,
       targetWidth: config.wideWidth,
     };
   }
 
-  // LOW VOLATILITY — consider tightening
-  // Track how long volatility has been below threshold
+  // LOW VOLATILITY — consider supplying to lending (risk-on)
   if (!calmSince.has(key)) {
     calmSince.set(key, now);
   }
@@ -115,18 +119,18 @@ export function decideAction(
   if (calmDuration >= settleTime) {
     currentRegime.set(key, "LOW");
 
-    // Already narrow?
-    if (currentWidth <= config.narrowWidth) {
+    // Already in risk-on mode?
+    if (currentRegimeState === "LOW") {
       return {
         action: "NO_ACTION",
-        reason: `Low volatility for ${Math.floor(calmDuration / 60)}min — range already narrow (${currentWidth})`,
+        reason: `Low volatility for ${Math.floor(calmDuration / 60)}min — already supplied to Bonzo Lending`,
         targetWidth: null,
       };
     }
 
     return {
-      action: "TIGHTEN_RANGE",
-      reason: `Volatility settled below ${config.volatilityThreshold}% for ${Math.floor(calmDuration / 60)}min (${config.settleMultiplier}x window) — tightening range to maximize fees`,
+      action: "SUPPLY_TO_LENDING",
+      reason: `Volatility settled below ${config.volatilityThreshold}% for ${Math.floor(calmDuration / 60)}min — supplying ${config.supplyToken} to Bonzo Lending to earn yield`,
       targetWidth: config.narrowWidth,
     };
   }
@@ -139,7 +143,7 @@ export function decideAction(
 }
 
 /**
- * Execute the full rebalance cycle: assess → decide → execute
+ * Execute the full rebalance cycle: assess → decide → execute on Bonzo Lending
  */
 export async function executeRebalanceCycle(
   config: StrategyConfig
@@ -156,12 +160,12 @@ export async function executeRebalanceCycle(
     config.volatilityThreshold
   );
 
-  // 2. Get current position width from strategy
-  const positionInfo = await getStrategyPositionInfo(config.strategyAddress);
-  const currentWidth = positionInfo.positionWidth;
+  // 2. Get current regime
+  const regime = currentRegime.get(config.strategyAddress) || "UNKNOWN";
+  const currentWidth = regime === "HIGH" ? config.wideWidth : config.narrowWidth;
 
   // 3. Decide action
-  const { action, reason, targetWidth } = decideAction(volatility, config, currentWidth);
+  const { action, reason, targetWidth } = decideAction(volatility, config, regime);
 
   // 4. Execute if needed
   if (action === "NO_ACTION") {
@@ -177,33 +181,21 @@ export async function executeRebalanceCycle(
     });
   }
 
-  // Check TWAP calm before executing
-  const isCalm = await getStrategyIsCalm(config.strategyAddress);
-  if (!isCalm) {
-    return withAudit({
-      action,
-      reason: `${reason} — BUT isCalm() is false (TWAP safety check failed), skipping execution`,
-      volatility,
-      currentWidth,
-      targetWidth,
-      executed: false,
-      transactionId: null,
-      error: "TWAP calm check failed — price too far from TWAP, unsafe to rebalance",
-    });
-  }
-
-  // Execute moveTicks to rebalance
   try {
-    const result = await moveTicks(config.strategyAddress, config.client);
-    lastActionTime.set(config.strategyAddress, Math.floor(Date.now() / 1000));
+    let txId: string | null = null;
 
-    // Reset calm tracker after any action
-    if (action === "WIDEN_RANGE") {
-      calmSince.delete(config.strategyAddress);
+    if (action === "SUPPLY_TO_LENDING") {
+      const result = await supplyToBonzo(config.supplyToken, config.supplyAmount, config.client);
+      if (result.error) throw new Error(result.error);
+      txId = result.supplyTxId;
+    } else if (action === "WITHDRAW_FROM_LENDING") {
+      const result = await withdrawFromBonzo(config.supplyToken, config.supplyAmount, false, config.client);
+      if (result.error) throw new Error(result.error);
+      txId = result.txId;
     }
-    if (action === "TIGHTEN_RANGE") {
-      calmSince.delete(config.strategyAddress);
-    }
+
+    lastActionTime.set(config.strategyAddress, Math.floor(Date.now() / 1000));
+    calmSince.delete(config.strategyAddress);
 
     return withAudit({
       action,
@@ -212,7 +204,7 @@ export async function executeRebalanceCycle(
       currentWidth,
       targetWidth,
       executed: true,
-      transactionId: result.transactionId,
+      transactionId: txId,
       error: null,
     });
   } catch (err) {

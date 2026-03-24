@@ -1,61 +1,42 @@
 import { streamText, tool } from "ai";
 import { z } from "zod";
-import axios from "axios";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import { CLM_VAULTS, getNetwork } from "@/lib/contracts/addresses";
-import {
-  getStrategyBalances,
-  getStrategyIsCalm,
-  getStrategyLastHarvest,
-  getStrategyPositionInfo,
-} from "@/lib/contracts/vault-reader";
+import { INFRASTRUCTURE, getNetwork } from "@/lib/contracts/addresses";
 import { getKeeperTools } from "@/lib/services/keeper-tools";
 import { getAuditLogs } from "@/lib/services/hcs-logger";
 import { analyzeTokenSentiment } from "@/lib/services/sentiment";
+import { getBonzoMarketData } from "@/lib/services/lending-reader";
 import {
+  getClientForSession,
   getSessionInfo,
   resolveSessionTokenFromRequest,
 } from "@/lib/services/user-session";
 
-function getDefaultVault() {
+function getDefaultLendingPool() {
   const network = getNetwork();
-  const vaults = CLM_VAULTS[network] as Record<
-    string,
-    {
-      vault: string;
-      strategy: string;
-      pool: string;
-      token0: string;
-      token1: string;
-      positionWidth: number;
-    }
-  >;
-  return vaults["CLXY-SAUCE"];
+  return INFRASTRUCTURE[network].lendingPool;
 }
 
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const messages = Array.isArray(body?.messages) ? body.messages : [];
-    const defaultVault = getDefaultVault();
+    const lendingPool = getDefaultLendingPool();
     const sessionToken =
       resolveSessionTokenFromRequest(request) || body?.sessionToken || undefined;
     const sessionInfo = sessionToken ? getSessionInfo(sessionToken) : null;
+    const userClient = sessionToken && sessionInfo ? getClientForSession(sessionToken) : undefined;
 
     const provider = createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY || "",
     });
     const model = provider(process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini");
 
-    const [positionInfo, balances, isCalm, lastHarvest, audit, sentiment] =
-      await Promise.all([
-        getStrategyPositionInfo(defaultVault.strategy),
-        getStrategyBalances(defaultVault.strategy),
-        getStrategyIsCalm(defaultVault.strategy),
-        getStrategyLastHarvest(defaultVault.strategy),
-        getAuditLogs({ limit: 5 }),
-        analyzeTokenSentiment({ tokenSymbol: "SAUCE", maxItems: 10, lookbackHours: 24 }),
-      ]);
+    const [marketData, audit, sentiment] = await Promise.all([
+      getBonzoMarketData(userClient),
+      getAuditLogs({ limit: 5 }),
+      analyzeTokenSentiment({ tokenSymbol: "SAUCE", maxItems: 10, lookbackHours: 24 }),
+    ]);
 
     const systemPrompt = [
       "You are Bonzo Guardian assistant.",
@@ -63,12 +44,8 @@ export async function POST(request: Request) {
       `Network: ${getNetwork()}`,
       `Session connected: ${sessionInfo ? "yes" : "no"}`,
       `Connected account: ${sessionInfo?.accountId || "none"}`,
-      `Vault: ${defaultVault.vault}`,
-      `Strategy: ${defaultVault.strategy}`,
-      `Current position width: ${positionInfo.positionWidth}`,
-      `Balances token0/token1: ${balances.token0}/${balances.token1}`,
-      `isCalm: ${isCalm}`,
-      `Last harvest timestamp: ${lastHarvest}`,
+      `Bonzo Lending Pool: ${lendingPool}`,
+      `Market data available: ${marketData.available ? "yes" : "no"}`,
       `Latest sentiment SAUCE: ${sentiment.sentiment.score} (${sentiment.sentiment.label})`,
       `Recent audit log entries: ${audit.logs.length}`,
       "If a tool returns an error, explain the likely cause and next action clearly.",
@@ -78,22 +55,17 @@ export async function POST(request: Request) {
 
     const customTools = {
       get_vault_status: tool({
-        description: "Fetch current on-chain vault strategy status.",
+        description:
+          "Fetch current Bonzo Lending status (legacy tool name kept for compatibility).",
         inputSchema: z.object({}),
         execute: async () => {
-          const [p, b, calm, lh] = await Promise.all([
-            getStrategyPositionInfo(defaultVault.strategy),
-            getStrategyBalances(defaultVault.strategy),
-            getStrategyIsCalm(defaultVault.strategy),
-            getStrategyLastHarvest(defaultVault.strategy),
-          ]);
+          const md = await getBonzoMarketData(userClient);
           return {
-            vault: defaultVault.vault,
-            strategy: defaultVault.strategy,
-            positionInfo: p,
-            balances: b,
-            isCalm: calm,
-            lastHarvest: lh,
+            type: "bonzo-lending",
+            network: getNetwork(),
+            lendingPool,
+            marketData: md.raw,
+            available: md.available,
           };
         },
       }),
@@ -101,11 +73,13 @@ export async function POST(request: Request) {
         description: "Fetch Bonzo market data through bonzo_market_data_tool.",
         inputSchema: z.object({}),
         execute: async () => {
-          const response = await axios.get(
-            "https://mainnet-data-staging.bonzo.finance/market",
-            { timeout: 10_000 }
-          );
-          return response.data;
+          const md = await getBonzoMarketData(userClient);
+          return {
+            type: "bonzo-lending",
+            lendingPool,
+            marketData: md.raw,
+            available: md.available,
+          };
         },
       }),
       get_audit_log: tool({

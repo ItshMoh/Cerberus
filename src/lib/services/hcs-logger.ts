@@ -7,6 +7,8 @@ import type { CircuitBreakerConfig, CircuitBreakerDecision } from "./circuit-bre
 import type { HarvestConfig, HarvestDecision } from "./harvester";
 
 export type AuditAction =
+  | "SUPPLY_TO_LENDING"
+  | "WITHDRAW_FROM_LENDING"
   | "WIDEN_RANGE"
   | "TIGHTEN_RANGE"
   | "NO_REBALANCE_ACTION"
@@ -222,7 +224,11 @@ export async function logRebalanceDecision(
     action:
       decision.action === "NO_ACTION"
         ? "NO_REBALANCE_ACTION"
-        : (decision.action as "WIDEN_RANGE" | "TIGHTEN_RANGE"),
+        : decision.action === "SUPPLY_TO_LENDING"
+          ? "SUPPLY_TO_LENDING"
+          : decision.action === "WITHDRAW_FROM_LENDING"
+            ? "WITHDRAW_FROM_LENDING"
+            : (decision.action as "WIDEN_RANGE" | "TIGHTEN_RANGE"),
     reason: decision.reason,
     params: {
       currentWidth: decision.currentWidth,

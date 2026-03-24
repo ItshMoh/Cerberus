@@ -1,6 +1,6 @@
 import type { Client } from "@hashgraph/sdk";
-import { panic } from "../contracts/vault-writer";
 import { getAgentToolkit } from "../agent-toolkit";
+import { withdrawFromBonzo } from "./lending-reader";
 import { assessStablecoinPeg, type PegAlertLevel, type PegFeedId } from "./peg-monitor";
 import { logCircuitBreakerDecision } from "./hcs-logger";
 
@@ -62,13 +62,6 @@ function isExecutableTool(tool: unknown): tool is ExecutableTool {
   if (!tool || typeof tool !== "object") return false;
   const candidate = tool as { execute?: unknown };
   return typeof candidate.execute === "function";
-}
-
-function parseTxId(raw: string | null): string | null {
-  if (!raw) return null;
-  const txRegex = /(\d+\.\d+\.\d+@\d+\.\d+)/;
-  const match = raw.match(txRegex);
-  return match ? match[1] : null;
 }
 
 function canDeposit(amount: string): boolean {
@@ -229,7 +222,15 @@ export async function executeCircuitBreakerCycle(
   }
 
   try {
-    const panicResult = await panic(config.strategyAddress, "0", "0", config.client);
+    // Withdraw all from Bonzo Lending for safety during de-peg
+    const withdrawResult = await withdrawFromBonzo(
+      config.safeTokenSymbol,
+      "0",
+      true, // withdrawAll
+      config.client
+    );
+
+    // Then deposit safe token back to Bonzo Lending
     const lendingAction = await executeBonzoSafeDeposit(
       config.safeTokenSymbol,
       config.safeDepositAmount,
@@ -239,17 +240,17 @@ export async function executeCircuitBreakerCycle(
 
     return withAudit({
       action: "PANIC_AND_DEPOSIT",
-      reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Executed panic and safe deposit flow.`,
+      reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Withdrew from lending and moved to safe assets.`,
       ...baseDecision,
-      panicExecuted: true,
-      panicTransactionId: panicResult.transactionId || parseTxId(panicResult.status),
+      panicExecuted: withdrawResult.withdrawn,
+      panicTransactionId: withdrawResult.txId,
       lendingAction,
-      error: lendingAction.error,
+      error: lendingAction.error || withdrawResult.error,
     });
   } catch (error) {
     return withAudit({
       action: "PANIC_AND_DEPOSIT",
-      reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Panic execution failed.`,
+      reason: `${config.monitoredFeed} critical de-peg detected: ${monitored.price.toFixed(6)} < ${config.criticalThreshold}. Emergency withdrawal failed.`,
       ...baseDecision,
       panicExecuted: false,
       panicTransactionId: null,
@@ -261,7 +262,7 @@ export async function executeCircuitBreakerCycle(
         depositResponse: null,
         error: null,
       },
-      error: error instanceof Error ? error.message : "Unknown panic execution error",
+      error: error instanceof Error ? error.message : "Unknown emergency withdrawal error",
     });
   }
 }
